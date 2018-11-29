@@ -110,7 +110,7 @@ class OrbitalBallRoller():
                         self.circumcircle(self.points, simplex)[1] > alpha
                         and c * self.tri_area(simplex) > 0,
                         self.simplexes)
-        self.alpha_complex = result
+        self.alpha_complex = np.stack(result)
 
     def plot_delaunay(self, tri):
         '''plots the curve and the triangulation'''
@@ -118,6 +118,17 @@ class OrbitalBallRoller():
         plt.plot(self.points[:, 0], self.points[:, 1])
         plt.show()
 
+    def get_background(self):
+        '''gets the background density from alpha shell'''
+        print(type(self.alpha_complex))
+        return np.unique(self.alpha_complex.flatten())
+
+    def locate_depletions(self):
+        '''using the upper alpha shape of the density curve this method locates
+           depletions in density from the background density.
+           the current behavior is adapted from Smith et. al. 2017/18
+        '''
+        return
 
 info = {'index': 'slt', 'kind': 'local time'}
 ivm = pysat.Instrument(platform='cnofs', name='ivm',
@@ -131,7 +142,9 @@ ivm.data = ivm.data.resample('1S', label='left').ffill(limit=7)
 
 orbit = OrbitalBallRoller(np.column_stack([ivm['slt'], ivm['ionDensity']]))
 orbit.get_alpha_complex(400)
-alpha_arr = np.stack(orbit.alpha_complex)
+alpha_arr = orbit.alpha_complex
+bkg = orbit.get_background()
 plt.plot(orbit.points[:, 0], orbit.points[:, 1])
 plt.triplot(orbit.points[:, 0], orbit.points[:, 1], alpha_arr)
+plt.plot(orbit.points[bkg, 0], orbit.points[bkg, 1])
 plt.show()
