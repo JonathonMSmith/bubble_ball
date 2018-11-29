@@ -98,15 +98,17 @@ class OrbitalBallRoller():
         # center=S/a, radius=np.sqrt(b/a+sq_norm(S)/a**2)
         return S / a, np.sqrt(b / a + sq_norm(S) / a**2)
 
-    def get_alpha_complex(self, alpha):
+    def get_alpha_complex(self, alpha, c=1):
         '''gets the alpha shape of triangulation
         parameters:
         a: alpha factor
         simplices: simplices from triangulation
+        c: constant to determine if the upper (1) or lower (-1) envelope
+        is desired. Upper envelope for depletions, lower for enhancements
         '''
         result = filter(lambda simplex:
                         self.circumcircle(self.points, simplex)[1] > alpha
-                        and self.tri_area(simplex) < 0,
+                        and c * self.tri_area(simplex) > 0,
                         self.simplexes)
         self.alpha_complex = result
 
