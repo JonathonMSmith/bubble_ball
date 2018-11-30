@@ -128,7 +128,23 @@ class OrbitalBallRoller():
            depletions in density from the background density.
            the current behavior is adapted from Smith et. al. 2017/18
         '''
-        return
+        depletions = []
+        upper_envelope = self.get_background()
+        delta_t = np.diff(self.points[upper_envelope, 0])
+        ind, = np.where(delta_t > 1)
+        for i in ind:
+            lead = upper_envelope[i]
+            trail = upper_envelope[i+1]
+            d_t = delta_t[i]
+            dens = self.points[lead:trail, 1]
+            min_edge = np.min([dens[0], dens[-1]])
+            min_dens = np.min(dens)
+            d_n = (min_edge - min_dens) / min_edge
+            if d_n > .25 and d_t/d_n < .002:
+                depletions.append((lead, trail))
+
+        return depletions
+
 
 info = {'index': 'slt', 'kind': 'local time'}
 ivm = pysat.Instrument(platform='cnofs', name='ivm',
