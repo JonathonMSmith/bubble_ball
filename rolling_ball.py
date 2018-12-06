@@ -26,6 +26,7 @@ class OrbitalBallRoller():
     '''
     def __init__(self, points):
         self.in_points = points
+        self.scale_factor = None
         self.treat_points()
         self.tri = Delaunay(self.points)
         self.simplexes = np.asarray(np.sort(self.tri.simplices))
@@ -44,9 +45,9 @@ class OrbitalBallRoller():
         density = medfilt([np.log10(x) for x in self.in_points[:, 1]], 7)
         points = zip(time, density)
         self.points = np.array([x for x in points if not np.isnan(x).any()])
-        scale_factor = self.get_scale_factor()
-        self.points[:, 0] /= np.sqrt(scale_factor)
-        self.points[:, 1] *= np.sqrt(scale_factor)
+        self.get_scale_factor()
+        self.points[:, 0] /= np.sqrt(self.scale_factor)
+        self.points[:, 1] *= np.sqrt(self.scale_factor)
 
     def get_scale_factor(self):
         '''returns scaling factor for ion density in delaunay triangulation
@@ -68,7 +69,7 @@ class OrbitalBallRoller():
         xdiff = np.sort(xdiff)
         minxdiff = next((x for x in xdiff if x != 0), None)
         maxydiff = np.max(np.abs(ydiff))
-        return minxdiff / maxydiff
+        self.scale_factor = minxdiff / maxydiff
 
     def tri_area(self, simplex):
         '''
@@ -132,6 +133,7 @@ class OrbitalBallRoller():
         upper_envelope = self.get_background()
         delta_t = np.diff(self.points[upper_envelope, 0])
         ind, = np.where(delta_t > 1)
+        print(self.scale_factor)
         for i in ind:
             lead = upper_envelope[i]
             trail = upper_envelope[i+1]
@@ -140,10 +142,13 @@ class OrbitalBallRoller():
             min_edge = np.min([dens[0], dens[-1]])
             min_dens = np.min(dens)
             d_n = (min_edge - min_dens) / min_edge
-            if d_n > .25 and d_t/d_n < .002:
-                depletions.append((lead, trail))
+            print('d_n:'+str(d_n))
+            print('d_t:'+str(d_t))
+            print('shape:'+str(d_t/d_n))
+            if d_n > .1: #and d_t/d_n < .6/np.sqrt(self.scale_factor):
+                depletions.append([lead, trail])
 
-        return depletions
+        return np.array(depletions)
 
 
 info = {'index': 'slt', 'kind': 'local time'}
@@ -158,9 +163,12 @@ ivm.data = ivm.data.resample('1S', label='left').ffill(limit=7)
 
 orbit = OrbitalBallRoller(np.column_stack([ivm['slt'], ivm['ionDensity']]))
 orbit.get_alpha_complex(400)
+deps = orbit.locate_depletions()
+print(deps)
 alpha_arr = orbit.alpha_complex
 bkg = orbit.get_background()
 plt.plot(orbit.points[:, 0], orbit.points[:, 1])
-plt.triplot(orbit.points[:, 0], orbit.points[:, 1], alpha_arr)
+#plt.triplot(orbit.points[:, 0], orbit.points[:, 1], alpha_arr)
 plt.plot(orbit.points[bkg, 0], orbit.points[bkg, 1])
+plt.scatter(orbit.points[deps.flatten(), 0], orbit.points[deps.flatten(), 1], marker='x', c='k')
 plt.show()
