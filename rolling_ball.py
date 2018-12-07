@@ -1,14 +1,10 @@
 '''
-class and methods for detecting depletions/enhancements in plasma density
-using a rolling ball technique
+   class and methods for detecting depletions/enhancements in plasma density
+   using a rolling ball technique
 '''
 import numpy as np
 from scipy.spatial import Delaunay
 from scipy.signal import medfilt
-import matplotlib.pyplot as plt
-import pysat
-
-clean_level = 'none'
 
 
 def sq_norm(vector):
@@ -38,6 +34,8 @@ class OrbitalBallRoller():
            it is also recommended that the density data be smoothed somewhat
            nan values cannot be included
            for the triangulation the axes must be scaled for geometric reasons
+           I'm not entirely sure why, perhaps a precision issue, but the
+           triangulation is much better if both axes are scaled similarly
            Parameters:
            points: array-like containing X and Y data, where Y is ion density
         '''
@@ -51,18 +49,18 @@ class OrbitalBallRoller():
 
     def get_scale_factor(self):
         '''returns scaling factor for ion density in delaunay triangulation
-        the ion density must be scaled so that the delaunay triangulation
-        produces meaningful geometry for the detection of bubbles and
-        background density.
-        More specifically: If the delta X (or time) between two distant
-        points is smaller than the delta Y for two points closer together,
-        a tringle edge will be placed between the two points closer together.
-        This creates a triangle that goes 'through' the ion density curve,
-        corrupting the alpha shape desired for the detection of bubbles.
-        So we make the largest delta y the same as the smallest delta x
-        parameters:
-        x : array-like, typically solar or magnetic local time
-        y : array-like, ion density
+           the ion density must be scaled so that the delaunay triangulation
+           produces meaningful geometry for the detection of bubbles and
+           background density.
+           More specifically: If the delta X (or time) between two distant
+           points is smaller than the delta Y for two points closer together,
+           a tringle edge will be placed between the two points closer together
+           This creates a triangle that goes 'through' the ion density curve,
+           corrupting the alpha shape desired for the detection of bubbles.
+           So we make the largest delta y the same as the smallest delta x
+           parameters:
+           x : array-like, typically solar or magnetic local time
+           y : array-like, ion density
         '''
         xdiff = np.diff(self.points[:, 0])
         ydiff = np.diff(self.points[:, 1])
@@ -73,8 +71,8 @@ class OrbitalBallRoller():
 
     def tri_area(self, simplex):
         '''
-        points is a 2d array of points in a plane, simplexes is an nx3 array
-        with indices for each point get area and circumradius of circle abc
+           points is a 2d array of points in a plane, simplexes is an nx3 array
+           with indices for each point get area and circumradius of circle abc
         '''
         # coordinates of each vertex
         A = self.points[simplex[0]]
@@ -101,11 +99,11 @@ class OrbitalBallRoller():
 
     def get_alpha_complex(self, alpha, c=1):
         '''gets the alpha shape of triangulation
-        parameters:
-        a: alpha factor
-        simplices: simplices from triangulation
-        c: constant to determine if the upper (1) or lower (-1) envelope
-        is desired. Upper envelope for depletions, lower for enhancements
+           parameters:
+           a: alpha factor
+           simplices: simplices from triangulation
+           c: constant to determine if the upper (1) or lower (-1) envelope
+           is desired. Upper envelope for depletions, lower for enhancements
         '''
         result = filter(lambda simplex:
                         self.circumcircle(self.points, simplex)[1] > alpha
@@ -115,60 +113,39 @@ class OrbitalBallRoller():
 
     def plot_delaunay(self, tri):
         '''plots the curve and the triangulation'''
+        import matplotlib.pyplot as plt
+
         plt.triplot(self.points[:, 0], self.points[:, 1], tri.simplices.copy())
         plt.plot(self.points[:, 0], self.points[:, 1])
         plt.show()
 
     def get_background(self):
         '''gets the background density from alpha shell'''
-        print(type(self.alpha_complex))
         return np.unique(self.alpha_complex.flatten())
 
     def locate_depletions(self):
         '''using the upper alpha shape of the density curve this method locates
            depletions in density from the background density.
            the current behavior is adapted from Smith et. al. 2017/18
+           For consistency with the source the density data is reverted to its
+           original (non log, and non linearly scaled) for the calculation
+           of the discrete depth (deltaN / N: d_n) and a shape value that
+           ensures the depletion is 'deeper' than it is 'wide'
         '''
         depletions = []
         upper_envelope = self.get_background()
         delta_t = np.diff(self.points[upper_envelope, 0])
-        ind, = np.where(delta_t > 1)
-        print(self.scale_factor)
+        ind, = np.where(delta_t > 0)
         for i in ind:
             lead = upper_envelope[i]
             trail = upper_envelope[i+1]
             d_t = delta_t[i]
             dens = self.points[lead:trail, 1]
-            min_edge = np.min([dens[0], dens[-1]])
-            min_dens = np.min(dens)
-            d_n = (min_edge - min_dens) / min_edge
-            print('d_n:'+str(d_n))
-            print('d_t:'+str(d_t))
-            print('shape:'+str(d_t/d_n))
-            if d_n > .1: #and d_t/d_n < .6/np.sqrt(self.scale_factor):
+            sqsf = np.sqrt(self.scale_factor)
+            min_edge = (np.min([dens[0], dens[-1]])) / sqsf
+            min_dens = (np.min(dens)) / sqsf
+            d_n = (10**min_edge - 10**min_dens) / 10**min_edge
+            if d_n > .1 and d_t/d_n < .6/sqsf:
                 depletions.append([lead, trail])
 
         return np.array(depletions)
-
-
-info = {'index': 'slt', 'kind': 'local time'}
-ivm = pysat.Instrument(platform='cnofs', name='ivm',
-                       orbit_info=info, clean_level=clean_level)
-start = pysat.datetime(2009, 7, 8)
-stop = pysat.datetime(2009, 7, 9)
-ivm.bounds = (start, stop)
-ivm.load(date=start)
-ivm.orbits[8]
-ivm.data = ivm.data.resample('1S', label='left').ffill(limit=7)
-
-orbit = OrbitalBallRoller(np.column_stack([ivm['slt'], ivm['ionDensity']]))
-orbit.get_alpha_complex(400)
-deps = orbit.locate_depletions()
-print(deps)
-alpha_arr = orbit.alpha_complex
-bkg = orbit.get_background()
-plt.plot(orbit.points[:, 0], orbit.points[:, 1])
-#plt.triplot(orbit.points[:, 0], orbit.points[:, 1], alpha_arr)
-plt.plot(orbit.points[bkg, 0], orbit.points[bkg, 1])
-plt.scatter(orbit.points[deps.flatten(), 0], orbit.points[deps.flatten(), 1], marker='x', c='k')
-plt.show()
