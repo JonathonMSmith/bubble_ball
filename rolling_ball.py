@@ -21,14 +21,16 @@ class OrbitalBallRoller():
        alpha: size factor for the determination of the Alpha shape of the data
     '''
     def __init__(self, points):
-        self.in_points = points
+        self.in_points = np.array(points)
+        if self.in_points.shape[0] < 7:
+            raise ValueError("input array must have at least seven rows")
         self.scale_factor = None
-        self.treat_points()
+        self._treat_points()
         self.tri = Delaunay(self.points)
         self.simplexes = np.asarray(np.sort(self.tri.simplices))
         self.alpha_complex = None
 
-    def treat_points(self):
+    def _treat_points(self):
         '''prepare data for triangulation if it is not already done
            it is recommended that the density be interpreted on a log scale
            it is also recommended that the density data be smoothed somewhat
@@ -43,11 +45,11 @@ class OrbitalBallRoller():
         density = medfilt([np.log10(x) for x in self.in_points[:, 1]], 7)
         points = zip(time, density)
         self.points = np.array([x for x in points if not np.isnan(x).any()])
-        self.get_scale_factor()
+        self._get_scale_factor()
         self.points[:, 0] /= np.sqrt(self.scale_factor)
         self.points[:, 1] *= np.sqrt(self.scale_factor)
 
-    def get_scale_factor(self):
+    def _get_scale_factor(self):
         '''returns scaling factor for ion density in delaunay triangulation
            the ion density must be scaled so that the delaunay triangulation
            produces meaningful geometry for the detection of bubbles and
@@ -64,12 +66,12 @@ class OrbitalBallRoller():
         '''
         xdiff = np.diff(self.points[:, 0])
         ydiff = np.diff(self.points[:, 1])
-        xdiff = np.sort(xdiff)
-        minxdiff = next((x for x in xdiff if x != 0), None)
+        xdiff = np.sort(np.abs(xdiff))
+        minxdiff = next((x for x in xdiff if x > 0), None)
         maxydiff = np.max(np.abs(ydiff))
         self.scale_factor = minxdiff / maxydiff
 
-    def tri_area(self, simplex):
+    def _tri_area(self, simplex):
         '''
            points is a 2d array of points in a plane, simplexes is an nx3 array
            with indices for each point get area and circumradius of circle abc
@@ -84,7 +86,7 @@ class OrbitalBallRoller():
         # return area of triangle
         return 0.5 * np.cross(AB, AC)
 
-    def circumcircle(self, points, simplex):
+    def _circumcircle(self, points, simplex):
         '''method to find the circumcircle of triangle specified by simplex'''
         A = [points[simplex[k]] for k in range(3)]
         M = [[1.0]*4]
@@ -106,16 +108,17 @@ class OrbitalBallRoller():
            is desired. Upper envelope for depletions, lower for enhancements
         '''
         result = filter(lambda simplex:
-                        self.circumcircle(self.points, simplex)[1] > alpha
-                        and c * self.tri_area(simplex) > 0,
+                        self._circumcircle(self.points, simplex)[1] > alpha
+                        and c * self._tri_area(simplex) > 0,
                         self.simplexes)
         self.alpha_complex = np.stack(result)
 
-    def plot_delaunay(self, tri):
+    def plot_delaunay(self):
         '''plots the curve and the triangulation'''
         import matplotlib.pyplot as plt
 
-        plt.triplot(self.points[:, 0], self.points[:, 1], tri.simplices.copy())
+        plt.triplot(self.points[:, 0], self.points[:, 1],
+                    self.tri.simplices.copy())
         plt.plot(self.points[:, 0], self.points[:, 1])
         plt.show()
 
