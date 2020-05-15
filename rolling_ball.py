@@ -5,12 +5,30 @@
 import numpy as np
 from scipy.spatial import Delaunay
 from scipy.signal import medfilt
+import xarray as xr
+from datetime import datetime
+import pysat
 
 
 def sq_norm(vector):
     '''squared norm '''
     return np.linalg.norm(vector)**2
 
+def filter_inst(inst):
+    '''prepare data for triangulation if it is not already done
+       it is recommended that the density be interpreted on a log scale
+       it is also recommended that the density data be smoothed somewhat
+       nan values cannot be included
+       for the triangulation the axes must be scaled for geometric reasons
+       I'm not entirely sure why, perhaps a precision issue, but the
+       triangulation is much better if both axes are scaled similarly
+       Parameters:
+       points: array-like containing X and Y data, where Y is ion density
+    '''
+    inst['filt_density'] = medfilt([np.log10(x) for x in inst['ionDensity']], 7)
+    idx, = np.where((~np.isnan(inst['slt'])) & (~np.isnan(inst['filt_density'])))
+    inst.data = inst.data.iloc[idx]
+    return inst
 
 class OrbitalBallRoller():
     '''class that takes time series data of ion density data and performs a
@@ -20,17 +38,18 @@ class OrbitalBallRoller():
        points: array-like containing X and Y data, where Y is the ion density
        alpha: size factor for the determination of the Alpha shape of the data
     '''
-    def __init__(self, points):
-        self.in_points = np.array(points)
-        if self.in_points.shape[0] < 7:
+    def __init__(self, inst):
+        self.inst = filter_inst(inst)
+        self.points = np.column_stack([self.inst['slt'], self.inst['filt_density']]) 
+        if self.points.shape[0] < 7:
             raise ValueError("input array must have at least seven rows")
         self.scale_factor = None
-        self._treat_points()
+        self._scale_points()
         self.tri = Delaunay(self.points)
         self.simplexes = np.asarray(np.sort(self.tri.simplices))
         self.alpha_complex = None
 
-    def _treat_points(self):
+    def _scale_points(self):
         '''prepare data for triangulation if it is not already done
            it is recommended that the density be interpreted on a log scale
            it is also recommended that the density data be smoothed somewhat
@@ -41,10 +60,6 @@ class OrbitalBallRoller():
            Parameters:
            points: array-like containing X and Y data, where Y is ion density
         '''
-        time = self.in_points[:, 0]
-        density = medfilt([np.log10(x) for x in self.in_points[:, 1]], 7)
-        points = zip(time, density)
-        self.points = np.array([x for x in points if not np.isnan(x).any()])
         self._get_scale_factor()
         self.points[:, 0] /= np.sqrt(self.scale_factor)
         self.points[:, 1] *= np.sqrt(self.scale_factor)
@@ -70,6 +85,7 @@ class OrbitalBallRoller():
         minxdiff = next((x for x in xdiff if x > 0), None)
         maxydiff = np.max(np.abs(ydiff))
         self.scale_factor = minxdiff / maxydiff
+        print(self.scale_factor)
 
     def _tri_area(self, simplex):
         '''
@@ -148,7 +164,91 @@ class OrbitalBallRoller():
             min_edge = (np.min([dens[0], dens[-1]])) / sqsf
             min_dens = (np.min(dens)) / sqsf
             d_n = (10**min_edge - 10**min_dens) / 10**min_edge
-            if d_n > .1 and d_t/d_n < .6/sqsf:
+            if d_n > .1 and d_t/d_n < .9/sqsf:
                 depletions.append([lead, trail])
+        self.depletions = depletions
 
-        return np.array(depletions)
+    def collate_bubble_data(self):
+        '''
+        at each edge get:
+        apex altitude
+        altitude
+        glon
+        glat
+        mlon
+        mlat
+        density
+        vz
+        slt
+        ut
+
+        within edges get:
+        min density
+        min vz
+        max vz
+        '''
+        if not self.depletions:
+            print('No Depletions')
+            return
+        edge_measures = ['time', 'slt', 'glon', 'glat', 'mlt', 'mlat', 'altitude', 'apex_altitude',
+                       'ionDensity', 'ionVelmeridional']
+        properties = ['lead', 'trail', 'ut_l', 'ut_t', 'slt_l', 'slt_t', 'glon_l', 'glon_t', 'glat_l', 'glat_t',
+                     'mlt_l', 'mlt_t', 'mlat_l', 'mlat_t', 'alt_l', 'alt_t', 'apex_alt_l', 'apex_alt_t',
+                     'ion_dens_l', 'ion_dens_t', 'vel_mer_l', 'vel_mer_t', 'min_dens', 'min_vel', 
+                     'max_vel', 'rpa_flag', 'dm_flag', 'apex_width', 'depth', 'norm_depth']
+
+        depletion_properties = []
+        times = []
+        for edges in self.depletions:
+            lead = edges[0]
+            trail = edges[1]
+            dep_props = [lead] # lead
+            dep_props.append(trail) # trail
+            # add all of the measurements from the edges in order
+            for name in edge_measures:
+                dep_props.append(self.inst[lead, name]) # lead_measurment
+                dep_props.append(self.inst[trail, name]) # trail_measurement
+
+            # add the internal depletion measurements
+            dep_props.append(np.min(self.inst[lead:trail, 'ionDensity'])) # min_dens
+            dep_props.append(np.min(self.inst[lead:trail, 'ionVelmeridional'])) # min_vel
+            dep_props.append(np.max(self.inst[lead:trail, 'ionVelmeridional'])) # max_vel
+            dep_props.append(np.max(self.inst[lead:trail, 'RPAflag'])) # rpa_flag
+            dep_props.append(np.max(self.inst[lead:trail, 'driftMeterflag'])) # dm_flag
+            dep_props.append(np.abs(self.inst[lead, 'apex_altitude'] \
+                             - self.inst[trail, 'apex_altitude'])) # apex_width
+            depth = np.max([self.inst[lead, 'ionDensity'], self.inst[trail, 'ionDensity']]) \
+                    - np.min(self.inst[lead:trail, 'ionDensity']) # depth
+            dep_props.append(depth)
+            dep_props.append(depth / np.max([self.inst[lead, 'ionDensity'], self.inst[trail, 'ionDensity']])) # norm_depth
+
+            times.append(self.inst.index[lead])
+            depletion_properties.append(dep_props)
+        return xr.DataArray(depletion_properties, coords=[times, properties], dims=['time', 'properties'])
+
+def climate_survey(start=None, stop=None, save=True):
+    if start == None or stop == None:
+        print('must include start and stop datetimes')
+        return
+    ivm = pysat.Instrument(platform='cnofs', name='ivm', clean_level='none')
+    clean_level = 'none'
+    info = {'index': 'slt', 'kind': 'local time'}
+    ivm = pysat.Instrument(platform='cnofs', name='ivm',
+                           orbit_info=info, clean_level=clean_level)
+    ivm.bounds = (start, stop)
+    ivm.download(start, stop)
+    ivm.load(date=start)
+    for orbit_count, ivm in enumerate(ivm.orbits):
+        ivm.data = ivm.data.resample('1S', label='left').ffill(limit=7)
+        orbit = OrbitalBallRoller(ivm)
+        orbit.get_alpha_complex(400)
+        orbit.locate_depletions()
+        out = orbit.collate_bubble_data()
+        if bit == 0:
+            bubble_array = out
+            bit += 1
+            continue
+        bubble_array = xr.concat(bubble_array, out, dim='time')
+    if save:
+        bubble_array.to_netcdf('bubble_properties.nc')
+    return bubble_array
