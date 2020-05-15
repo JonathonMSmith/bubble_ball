@@ -236,7 +236,7 @@ def climate_survey(start=None, stop=None, save=True):
     ivm = pysat.Instrument(platform='cnofs', name='ivm',
                            orbit_info=info, clean_level=clean_level)
     ivm.bounds = (start, stop)
-    ivm.download(start, stop)
+    #ivm.download(start, stop)
     ivm.load(date=start)
     for orbit_count, ivm in enumerate(ivm.orbits):
         ivm.data = ivm.data.resample('1S', label='left').ffill(limit=7)
