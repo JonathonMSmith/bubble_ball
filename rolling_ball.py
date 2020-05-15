@@ -85,7 +85,6 @@ class OrbitalBallRoller():
         minxdiff = next((x for x in xdiff if x > 0), None)
         maxydiff = np.max(np.abs(ydiff))
         self.scale_factor = minxdiff / maxydiff
-        print(self.scale_factor)
 
     def _tri_area(self, simplex):
         '''
@@ -123,11 +122,14 @@ class OrbitalBallRoller():
            c: constant to determine if the upper (1) or lower (-1) envelope
            is desired. Upper envelope for depletions, lower for enhancements
         '''
-        result = filter(lambda simplex:
-                        self._circumcircle(self.points, simplex)[1] > alpha
-                        and c * self._tri_area(simplex) > 0,
-                        self.simplexes)
-        self.alpha_complex = np.stack(result)
+        result = list(filter(lambda simplex:
+                             self._circumcircle(self.points, simplex)[1] > alpha
+                             and c * self._tri_area(simplex) > 0,
+                             self.simplexes))
+        if result:
+            self.alpha_complex = np.stack(result)
+        else:
+            self.alpha_complex = np.array([])
 
     def plot_delaunay(self):
         '''plots the curve and the triangulation'''
@@ -153,6 +155,10 @@ class OrbitalBallRoller():
         '''
         depletions = []
         upper_envelope = self.get_background()
+        if upper_envelope.size <= 0:
+            self.depletions = depletions
+            return
+
         delta_t = np.diff(self.points[upper_envelope, 0])
         ind, = np.where(delta_t > 0)
         for i in ind:
@@ -233,22 +239,25 @@ def climate_survey(start=None, stop=None, save=True):
     ivm = pysat.Instrument(platform='cnofs', name='ivm', clean_level='none')
     clean_level = 'none'
     info = {'index': 'slt', 'kind': 'local time'}
-    ivm = pysat.Instrument(platform='cnofs', name='ivm',
+    Ivm = pysat.Instrument(platform='cnofs', name='ivm',
                            orbit_info=info, clean_level=clean_level)
-    ivm.bounds = (start, stop)
-    #ivm.download(start, stop)
-    ivm.load(date=start)
-    for orbit_count, ivm in enumerate(ivm.orbits):
+    Ivm.bounds = (start, stop)
+    bit = 0
+#    Ivm.download(start, stop)
+    for orbit_count, ivm in enumerate(Ivm.orbits):
         ivm.data = ivm.data.resample('1S', label='left').ffill(limit=7)
         orbit = OrbitalBallRoller(ivm)
         orbit.get_alpha_complex(400)
         orbit.locate_depletions()
         out = orbit.collate_bubble_data()
-        if bit == 0:
+        if bit == 1 and out is not None:
+            bubble_array = xr.concat([bubble_array, out], dim='time')
+        elif bit == 0 and out is not None:
             bubble_array = out
             bit += 1
             continue
-        bubble_array = xr.concat(bubble_array, out, dim='time')
+        elif bit == 0 and out is None:
+            continue
     if save:
         bubble_array.to_netcdf('bubble_properties.nc')
     return bubble_array
