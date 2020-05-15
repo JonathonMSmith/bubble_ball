@@ -236,7 +236,6 @@ def climate_survey(start=None, stop=None, save=True):
     if start == None or stop == None:
         print('must include start and stop datetimes')
         return
-    ivm = pysat.Instrument(platform='cnofs', name='ivm', clean_level='none')
     clean_level = 'none'
     info = {'index': 'slt', 'kind': 'local time'}
     Ivm = pysat.Instrument(platform='cnofs', name='ivm',
