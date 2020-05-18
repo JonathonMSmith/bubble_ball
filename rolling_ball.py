@@ -8,7 +8,10 @@ from scipy.signal import medfilt
 import xarray as xr
 from datetime import datetime
 import pysat
+import logging
 
+
+logging.basicConfig(level=logging.DEBUG, filename='bubble.log')
 
 def sq_norm(vector):
     '''squared norm '''
@@ -232,8 +235,9 @@ class OrbitalBallRoller():
             depletion_properties.append(dep_props)
         return xr.DataArray(depletion_properties, coords=[times, properties], dims=['time', 'properties'])
 
+
 def climate_survey(start=None, stop=None, save=True):
-    if start == None or stop == None:
+    if start is None or stop is None:
         print('must include start and stop datetimes')
         return
     clean_level = 'none'
@@ -245,7 +249,11 @@ def climate_survey(start=None, stop=None, save=True):
 #    Ivm.download(start, stop)
     for orbit_count, ivm in enumerate(Ivm.orbits):
         ivm.data = ivm.data.resample('1S', label='left').ffill(limit=7)
-        orbit = OrbitalBallRoller(ivm)
+        try:
+            orbit = OrbitalBallRoller(ivm)
+        except ValueError as err:
+            print(err)
+            continue
         orbit.get_alpha_complex(400)
         orbit.locate_depletions()
         out = orbit.collate_bubble_data()
@@ -260,3 +268,12 @@ def climate_survey(start=None, stop=None, save=True):
     if save:
         bubble_array.to_netcdf('bubble_properties.nc')
     return bubble_array
+
+
+def run_survey():
+    start = datetime(2008, 8, 1)
+    stop = datetime(2015, 7, 1)
+    try:
+        climate_survey(start=start, stop=stop)
+    except:
+        logging.exception('uh oh:')
